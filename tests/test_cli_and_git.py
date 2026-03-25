@@ -101,7 +101,7 @@ def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsy
     monkeypatch.chdir(git_repo)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
-    exit_code = gts.main(["git_time_shift.py", "HEAD~2..HEAD", "+1d"])
+    exit_code = gts.main(["git_time_shift.py", "HEAD~2..HEAD", "--offset", "-1d1h"])
     assert exit_code == 0
 
     log_lines = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-2").strip().splitlines()
@@ -110,8 +110,8 @@ def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsy
         for line in log_lines
     ]
     assert parsed == [
-        ("third", "2024-01-04T12:00:00+00:00", "2024-01-04T12:09:00+00:00"),
-        ("second", "2024-01-03T11:00:00+00:00", "2024-01-03T11:06:00+00:00"),
+        ("third", "2024-01-02T11:00:00+00:00", "2024-01-02T11:09:00+00:00"),
+        ("second", "2024-01-01T10:00:00+00:00", "2024-01-01T10:06:00+00:00"),
     ]
     assert "Rewrote timestamps for 2 selected commit(s)." in capsys.readouterr().out
 

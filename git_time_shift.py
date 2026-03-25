@@ -297,25 +297,38 @@ def apply_offset_token(dt: datetime, sign: int, amount: int, unit: str) -> datet
     raise ToolError(f"unsupported offset unit: {unit}")
 
 
-def parse_offset_expression(parts: list[str]) -> list[tuple[int, int, str]]:
-    expression = " ".join(parts).strip()
+def parse_offset_expression(expression: str | None) -> list[tuple[int, int, str]]:
+    if expression is None:
+        return []
+
+    expression = expression.strip()
     if not expression:
         return []
 
+    sign = 1
+    if expression[0] in "+-":
+        sign = 1 if expression[0] == "+" else -1
+        expression = expression[1:].strip()
+    if not expression:
+        raise ToolError(
+            "invalid offset; use a single expression like 1d, -1d1h, or 2mo30m"
+        )
+
     tokens: list[tuple[int, int, str]] = []
     index = 0
-    pattern = re.compile(r"([+-])\s*(\d+)\s*(y|mo|w|d|h|m|s)")
+    pattern = re.compile(r"(\d+)\s*(y|mo|w|d|h|m|s)")
     while index < len(expression):
         while index < len(expression) and expression[index].isspace():
             index += 1
+        if index >= len(expression):
+            break
         match = pattern.match(expression, index)
         if not match:
             raise ToolError(
-                "invalid offset; use tokens like +1d -10h +30m +2mo"
+                "invalid offset; use a single expression like 1d, -1d1h, or 2mo30m"
             )
-        sign = 1 if match.group(1) == "+" else -1
-        amount = int(match.group(2))
-        unit = match.group(3)
+        amount = int(match.group(1))
+        unit = match.group(2)
         tokens.append((sign, amount, unit))
         index = match.end()
 
@@ -550,9 +563,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("range_expr", help="git-compatible revision range (for example: HEAD~3..HEAD)")
     parser.add_argument(
-        "offset_parts",
-        nargs="*",
-        help="optional offset expression, for example: +1d -10h +30m",
+        "--offset",
+        dest="offset_expr",
+        help="optional offset expression, for example: -1d1h or 2mo30m",
     )
     parser.add_argument(
         "--format",
@@ -580,8 +593,8 @@ def main(argv: list[str]) -> int:
     commits = get_commits(repo_root, args.range_expr)
     format_spec = normalize_date_format(args.date_format)
 
-    if args.offset_parts:
-        offset_tokens = parse_offset_expression(args.offset_parts)
+    if args.offset_expr:
+        offset_tokens = parse_offset_expression(args.offset_expr)
         updated_dates = build_offset_dates(commits, offset_tokens)
     else:
         updated_dates = collect_edited_dates(repo_root, commits, format_spec)

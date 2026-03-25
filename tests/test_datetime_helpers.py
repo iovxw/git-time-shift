@@ -119,18 +119,25 @@ def test_month_shift_and_offset_helpers() -> None:
     assert gts.apply_offset_token(leap, -1, 2, "h").isoformat() == "2024-01-31T10:00:00+00:00"
     assert gts.apply_offset_token(leap, 1, 30, "s").isoformat() == "2024-01-31T12:00:30+00:00"
 
-    tokens = gts.parse_offset_expression(["+1d", "-2h", "+3m", "+1mo"])
+    tokens = gts.parse_offset_expression("1mo1d3m")
     shifted = gts.apply_offset(leap, tokens)
-    assert shifted.isoformat() == "2024-03-01T10:03:00+00:00"
+    assert shifted.isoformat() == "2024-03-01T12:03:00+00:00"
+
+    negative_tokens = gts.parse_offset_expression("-1d2h")
+    negative_shifted = gts.apply_offset(leap, negative_tokens)
+    assert negative_shifted.isoformat() == "2024-01-30T10:00:00+00:00"
 
 
 def test_offset_parse_errors_and_invalid_unit() -> None:
-    assert gts.parse_offset_expression([]) == []
-    assert gts.parse_offset_expression(["+1d", "   "]) == [(1, 1, "d")]
-    assert gts.parse_offset_expression(["+1d   "]) == [(1, 1, "d")]
+    assert gts.parse_offset_expression(None) == []
+    assert gts.parse_offset_expression("   ") == []
+    assert gts.parse_offset_expression("1d   ") == [(1, 1, "d")]
 
     with pytest.raises(gts.ToolError, match="invalid offset"):
-        gts.parse_offset_expression(["tomorrow"])
+        gts.parse_offset_expression("tomorrow")
+
+    with pytest.raises(gts.ToolError, match="invalid offset"):
+        gts.parse_offset_expression("+1d-2h")
 
     with pytest.raises(gts.ToolError, match="unsupported offset unit"):
         gts.apply_offset_token(datetime(2024, 1, 1, tzinfo=UTC), 1, 1, "q")

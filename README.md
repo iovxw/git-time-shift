@@ -4,7 +4,7 @@
 
 It supports two workflows:
 
-1. **Offset mode**: shift both timestamps for every selected commit with expressions such as `+1d -10h`.
+1. **Offset mode**: shift both timestamps for every selected commit with a single expression such as `1d30m` or `-1d1h`.
 2. **Editor mode**: open an editable file, let you change author and committer times commit-by-commit, preview the result, then confirm with `y/n`.
 
 ## Requirements
@@ -22,21 +22,21 @@ This tool rewrites history. Commit IDs will change for the selected commits and 
 ## Usage
 
 ```bash
-python3 git_time_shift.py <range> [offset ...] [--format FORMAT]
+python3 git_time_shift.py <range> [--offset OFFSET] [--format FORMAT]
 ```
 
 ### Offset mode
 
-Shift the last three commits by one day and back ten hours:
+Shift the last three commits forward by one day and thirty minutes:
 
 ```bash
-python3 git_time_shift.py HEAD~3..HEAD +1d -10h
+python3 git_time_shift.py HEAD~3..HEAD --offset 1d30m
 ```
 
-Shift all commits that are in `feature` but not in `main`:
+Shift all commits that are in `feature` but not in `main` back by one day and one hour:
 
 ```bash
-python3 git_time_shift.py main..feature +2h
+python3 git_time_shift.py main..feature --offset=-1d1h
 ```
 
 ### Editor mode
@@ -82,7 +82,7 @@ python3 git_time_shift.py HEAD~2..HEAD --format '+%Y-%m-%d %H:%M:%S %:z'
 
 ## Offset syntax
 
-Offset expressions are space-separated tokens:
+Offset expressions use a single value. A leading sign applies to the whole expression, and each expression can contain multiple units:
 
 - `y` = years
 - `mo` = months
@@ -95,9 +95,10 @@ Offset expressions are space-separated tokens:
 Examples:
 
 ```bash
-python3 git_time_shift.py HEAD~4..HEAD +1d
-python3 git_time_shift.py HEAD~4..HEAD +1d -10h +30m
-python3 git_time_shift.py HEAD~4..HEAD +2mo
+python3 git_time_shift.py HEAD~4..HEAD --offset 1d
+python3 git_time_shift.py HEAD~4..HEAD --offset 1d10h30m
+python3 git_time_shift.py HEAD~4..HEAD --offset=-1d1h
+python3 git_time_shift.py HEAD~4..HEAD --offset 2mo
 ```
 
 ## Notes
