@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "git-time-shift"
+version = "0.1.0"
+description = "Rewrite author and committer timestamps for a git-compatible commit range."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+git-time-shift = "git_time_shift:cli"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4.2",
+  "pytest-cov>=7.0.0",
+]
+
+[tool.setuptools]
+py-modules = ["git_time_shift"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=git_time_shift --cov-branch --cov-report=term-missing --cov-fail-under=100"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["git_time_shift"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
