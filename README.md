@@ -50,7 +50,7 @@ python3 git_time_shift.py HEAD~5..HEAD
 Each editable line looks like this:
 
 ```text
-author=2026-04-27 17:05:46+00:00 | committer=2026-04-27 17:06:10+00:00 abc1234 Example commit subject
+author=2026-04-27 17:05:46+00:00 committer=2026-04-27 17:06:10+00:00 abc1234 Example commit subject
 ```
 
 Change only the timestamp values. After you save and exit, the tool prints a preview and asks for confirmation.

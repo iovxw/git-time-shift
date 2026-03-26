@@ -365,6 +365,10 @@ def open_editor(repo_root: str, file_path: str) -> None:
         raise ToolError(f"editor exited with status {exc.returncode}") from exc
 
 
+def format_author_committer_pair(author_text: str, committer_text: str) -> str:
+    return f"author={author_text} committer={committer_text}"
+
+
 def build_editor_buffer(commits: list[CommitRecord], spec: DateFormatSpec) -> str:
     lines = [
         "# Edit author and committer times for each commit below.",
@@ -376,7 +380,7 @@ def build_editor_buffer(commits: list[CommitRecord], spec: DateFormatSpec) -> st
         author_text = format_datetime(commit.author_dt, spec)
         committer_text = format_datetime(commit.committer_dt, spec)
         lines.append(
-            f"author={author_text} | committer={committer_text} {commit.short_hash} {commit.subject}"
+            f"{format_author_committer_pair(author_text, committer_text)} {commit.short_hash} {commit.subject}"
         )
     lines.append("")
     return "\n".join(lines)
@@ -390,7 +394,7 @@ def parse_editor_buffer(
     by_short_hash = {commit.short_hash: commit for commit in commits}
     updated: dict[str, tuple[datetime, datetime]] = {}
     pattern = re.compile(
-        r"^author=(?P<author>.+?) \| committer=(?P<committer>.+?) (?P<short>[0-9a-f]+) (?P<subject>.*)$"
+        r"^author=(?P<author>.+?) committer=(?P<committer>.+?) (?P<short>[0-9a-f]+) (?P<subject>.*)$"
     )
 
     for raw_line in content.splitlines():
@@ -474,13 +478,13 @@ def build_preview_lines(
         changed = new_author != commit.author_dt or new_committer != commit.committer_dt
         if not changed:
             continue
-        old_text = (
-            f"author={format_datetime(commit.author_dt, spec)} | "
-            f"committer={format_datetime(commit.committer_dt, spec)}"
+        old_text = format_author_committer_pair(
+            format_datetime(commit.author_dt, spec),
+            format_datetime(commit.committer_dt, spec),
         )
-        new_text = (
-            f"author={format_datetime(new_author, spec)} | "
-            f"committer={format_datetime(new_committer, spec)}"
+        new_text = format_author_committer_pair(
+            format_datetime(new_author, spec),
+            format_datetime(new_committer, spec),
         )
         preview_lines.append(f"{old_text} {ARROW} {new_text} {commit.short_hash} {commit.subject}")
         mapping[commit.full_hash] = {

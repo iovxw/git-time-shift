@@ -37,6 +37,7 @@ def test_build_editor_buffer_and_parse_success() -> None:
     spec = gts.normalize_date_format("rfc-3339=seconds")
     content = gts.build_editor_buffer(commits, spec)
     assert "# Format: rfc-3339=seconds" in content
+    assert "|" not in content
 
     edited = content.replace("2024-01-02 11:00:00+00:00", "2024-01-03 12:30:00+00:00", 1)
     edited = edited.replace("2024-01-02 11:06:00+00:00", "2024-01-03 12:45:00+00:00", 1)
@@ -49,14 +50,14 @@ def test_build_editor_buffer_and_parse_success() -> None:
     ("edited", "message"),
     [
         ("bad line", "could not parse edited line"),
-        ("author=2024-01-01 10:00:00+00:00 | committer=2024-01-01 10:05:00+00:00 deadbee first commit", "unknown short hash"),
-        ("author=2024-01-01 10:00:00+00:00 | committer=2024-01-01 10:05:00+00:00 aaaa111 changed subject", "commit subject changed"),
+        ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 deadbee first commit", "unknown short hash"),
+        ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 changed subject", "commit subject changed"),
         (
             "\n".join(
                 [
-                    "author=2024-01-01 10:00:00+00:00 | committer=2024-01-01 10:05:00+00:00 aaaa111 first commit",
-                    "author=2024-01-01 10:00:00+00:00 | committer=2024-01-01 10:05:00+00:00 aaaa111 first commit",
-                    "author=2024-01-02 11:00:00+00:00 | committer=2024-01-02 11:06:00+00:00 bbbb222 second commit",
+                    "author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit",
+                    "author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit",
+                    "author=2024-01-02 11:00:00+00:00 committer=2024-01-02 11:06:00+00:00 bbbb222 second commit",
                 ]
             ),
             "duplicate short hash",
@@ -73,7 +74,7 @@ def test_parse_editor_buffer_errors(edited: str, message: str) -> None:
 def test_parse_editor_buffer_missing_commit() -> None:
     commits = sample_commits()
     spec = gts.normalize_date_format("rfc-3339=seconds")
-    edited = "author=2024-01-01 10:00:00+00:00 | committer=2024-01-01 10:05:00+00:00 aaaa111 first commit"
+    edited = "author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit"
     with pytest.raises(gts.ToolError, match="missing commits"):
         gts.parse_editor_buffer(edited, commits, spec)
 
@@ -118,10 +119,11 @@ def test_collect_edited_dates_cleanup_missing_file(tmp_path: Path, monkeypatch: 
 
 def test_build_offset_dates_preview_and_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
     commits = sample_commits()
-    offset_tokens = gts.parse_offset_expression(["+1d"])
+    offset_tokens = gts.parse_offset_expression("1d")
     updated = gts.build_offset_dates(commits, offset_tokens)
     preview_lines, mapping = gts.build_preview_lines(commits, updated, gts.normalize_date_format("rfc-3339=seconds"))
     assert len(preview_lines) == 2
+    assert all("|" not in line for line in preview_lines)
     assert set(mapping) == {"a" * 40, "b" * 40}
 
     unchanged, unchanged_mapping = gts.build_preview_lines(
@@ -167,6 +169,8 @@ def test_determine_editor_and_open_editor(monkeypatch: pytest.MonkeyPatch, tmp_p
         raise gts.ToolError("no git var")
 
     monkeypatch.setattr(gts, "git", raise_tool_error)
+    monkeypatch.delenv("GIT_EDITOR", raising=False)
+    monkeypatch.delenv("VISUAL", raising=False)
     monkeypatch.setenv("EDITOR", "vim")
     assert gts.determine_editor(str(tmp_path)) == "vim"
 
