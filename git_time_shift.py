@@ -13,11 +13,13 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime as format_rfc2822_datetime, parsedate_to_datetime
 from pathlib import Path
 
 
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 ARROW = "→"
+SUPPORTED_DATE_FORMATS = ("rfc-3339", "iso-8601", "rfc-2822", "unix")
 
 
 class ToolError(RuntimeError):
@@ -36,10 +38,7 @@ class CommitRecord:
 @dataclass(frozen=True)
 class DateFormatSpec:
     raw: str
-    kind: str
-    base: str = ""
-    precision: str = ""
-    custom_format: str = ""
+    base: str
 
 
 def run_command(
@@ -115,33 +114,23 @@ def parse_git_iso(value: str) -> datetime:
 
 def normalize_date_format(raw_spec: str | None) -> DateFormatSpec:
     if not raw_spec:
-        return DateFormatSpec(raw="rfc-3339=seconds", kind="selector", base="rfc-3339", precision="seconds")
+        return DateFormatSpec(raw="rfc-3339", base="rfc-3339")
 
     spec = raw_spec.strip()
     if not spec:
-        return DateFormatSpec(raw="rfc-3339=seconds", kind="selector", base="rfc-3339", precision="seconds")
-
-    if spec.startswith("+"):
-        return DateFormatSpec(raw=spec, kind="custom", custom_format=spec[1:])
+        return DateFormatSpec(raw="rfc-3339", base="rfc-3339")
 
     if spec.startswith("--"):
         spec = spec[2:]
 
     normalized = spec.lower()
-    normalized = normalized.replace("rfc3339", "rfc-3339").replace("iso8601", "iso-8601")
+    normalized = normalized.replace("rfc3339", "rfc-3339").replace("iso8601", "iso-8601").replace("rfc2822", "rfc-2822")
 
-    if normalized in {"rfc-3339", "iso-8601"}:
-        base = normalized
-        return DateFormatSpec(raw=spec, kind="selector", base=base, precision="seconds")
-
-    if "=" in normalized:
-        base, precision = normalized.split("=", 1)
-        if base in {"rfc-3339", "iso-8601"} and precision in {"date", "hours", "minutes", "seconds", "ns"}:
-            return DateFormatSpec(raw=spec, kind="selector", base=base, precision=precision)
+    if normalized in SUPPORTED_DATE_FORMATS:
+        return DateFormatSpec(raw=normalized, base=normalized)
 
     raise ToolError(
-        "unsupported --format value; use +FORMAT or one of "
-        "rfc-3339[=date|hours|minutes|seconds|ns], iso-8601[=date|hours|minutes|seconds|ns]"
+        "unsupported --format value; choose one of: rfc-3339, iso-8601, rfc-2822, unix"
     )
 
 
@@ -160,115 +149,53 @@ def format_offset(dt: datetime, *, include_seconds: bool = False) -> str:
 
 
 def format_standard_datetime(dt: datetime, spec: DateFormatSpec) -> str:
-    if spec.precision == "date":
-        return dt.strftime("%Y-%m-%d")
-
-    separator = " " if spec.base == "rfc-3339" else "T"
-    date_part = dt.strftime("%Y-%m-%d")
-
-    if spec.precision == "hours":
-        time_part = dt.strftime("%H")
-    elif spec.precision == "minutes":
-        time_part = dt.strftime("%H:%M")
-    elif spec.precision == "seconds":
-        time_part = dt.strftime("%H:%M:%S")
-    elif spec.precision == "ns":
-        time_part = f"{dt.strftime('%H:%M:%S')}.{dt.microsecond:06d}000"
-    else:
-        raise ToolError(f"unsupported precision: {spec.precision}")
-
-    return f"{date_part}{separator}{time_part}{format_offset(dt)}"
-
-
-def format_custom_datetime(dt: datetime, raw_format: str) -> str:
-    tokenized = (
-        raw_format.replace("%::z", "__GIT_TIME_SHIFT_TZ_SECOND__")
-        .replace("%:z", "__GIT_TIME_SHIFT_TZ_MINUTE__")
-        .replace("%N", "__GIT_TIME_SHIFT_NANO__")
-    )
-    rendered = dt.strftime(tokenized)
-    rendered = rendered.replace("__GIT_TIME_SHIFT_TZ_SECOND__", format_offset(dt, include_seconds=True))
-    rendered = rendered.replace("__GIT_TIME_SHIFT_TZ_MINUTE__", format_offset(dt))
-    rendered = rendered.replace("__GIT_TIME_SHIFT_NANO__", f"{dt.microsecond:06d}000")
-    return rendered
+    if spec.base == "rfc-3339":
+        return f"{dt.strftime('%Y-%m-%d %H:%M:%S')}{format_offset(dt)}"
+    if spec.base == "iso-8601":
+        return f"{dt.strftime('%Y-%m-%dT%H:%M:%S')}{format_offset(dt)}"
+    if spec.base == "rfc-2822":
+        return format_rfc2822_datetime(dt)
+    if spec.base == "unix":
+        return str(int(dt.timestamp()))
+    raise ToolError(f"unsupported format: {spec.base}")
 
 
 def format_datetime(dt: datetime, spec: DateFormatSpec) -> str:
-    if spec.kind == "selector":
-        return format_standard_datetime(dt, spec)
-    return format_custom_datetime(dt, spec.custom_format)
+    return format_standard_datetime(dt, spec)
 
 
 def parse_standard_datetime(text: str, spec: DateFormatSpec) -> datetime:
     value = text.strip()
-    if spec.precision == "date":
-        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=LOCAL_TZ)
+    if spec.base in {"rfc-3339", "iso-8601"}:
+        if value.endswith("Z"):
+            value = f"{value[:-1]}+00:00"
+        if spec.base == "rfc-3339" and " " in value and "T" not in value:
+            value = value.replace(" ", "T", 1)
+        try:
+            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z")
+        except ValueError as exc:
+            raise ToolError(f"invalid {spec.base} timestamp: {text}") from exc
 
-    if value.endswith("Z"):
-        value = f"{value[:-1]}+00:00"
-    if spec.base == "rfc-3339" and " " in value and "T" not in value:
-        value = value.replace(" ", "T", 1)
-
-    if spec.precision == "hours":
-        return datetime.strptime(value, "%Y-%m-%dT%H%z")
-    if spec.precision == "minutes":
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M%z")
-    if spec.precision == "seconds":
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z")
-    if spec.precision == "ns":
-        match = re.fullmatch(
-            r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(?P<fraction>\d{1,9})(?P<offset>[+-]\d{2}:\d{2})",
-            value,
-        )
-        if not match:
-            raise ToolError(f"invalid nanosecond timestamp: {text}")
-        fraction = match.group("fraction")[:6].ljust(6, "0")
-        parsed = datetime.strptime(
-            f"{match.group('stamp')}.{fraction}{match.group('offset')}",
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-        )
+    if spec.base == "rfc-2822":
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError) as exc:
+            raise ToolError(f"invalid rfc-2822 timestamp: {text}") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=LOCAL_TZ)
         return parsed
-    raise ToolError(f"unsupported precision: {spec.precision}")
 
+    if spec.base == "unix":
+        try:
+            return datetime.fromtimestamp(int(value), tz=timezone.utc)
+        except ValueError as exc:
+            raise ToolError(f"invalid unix timestamp: {text}") from exc
 
-def normalize_fractional_seconds(text: str) -> str:
-    match = re.search(r"\.(\d{1,9})", text)
-    if not match:
-        raise ToolError("custom format uses %N but the value has no fractional seconds")
-    fraction = match.group(1)[:6].ljust(6, "0")
-    return f"{text[:match.start(1)]}{fraction}{text[match.end(1):]}"
-
-
-def normalize_custom_datetime(text: str, raw_format: str) -> tuple[str, str]:
-    normalized_text = text
-    python_format = raw_format
-
-    if "%::z" in raw_format:
-        normalized_text = re.sub(r"([+-]\d{2}):(\d{2}):(\d{2})", r"\1\2\3", normalized_text)
-        python_format = python_format.replace("%::z", "%z")
-    elif "%:z" in raw_format:
-        normalized_text = re.sub(r"([+-]\d{2}):(\d{2})(?!:\d{2})", r"\1\2", normalized_text)
-        python_format = python_format.replace("%:z", "%z")
-
-    if "%N" in raw_format:
-        normalized_text = normalize_fractional_seconds(normalized_text)
-        python_format = python_format.replace("%N", "%f")
-
-    return normalized_text, python_format
-
-
-def parse_custom_datetime(text: str, raw_format: str) -> datetime:
-    normalized_text, python_format = normalize_custom_datetime(text.strip(), raw_format)
-    parsed = datetime.strptime(normalized_text, python_format)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=LOCAL_TZ)
-    return parsed
+    raise ToolError(f"unsupported format: {spec.base}")
 
 
 def parse_datetime_value(text: str, spec: DateFormatSpec) -> datetime:
-    if spec.kind == "selector":
-        return parse_standard_datetime(text, spec)
-    return parse_custom_datetime(text, spec.custom_format)
+    return parse_standard_datetime(text, spec)
 
 
 def month_shift(dt: datetime, months: int) -> datetime:
@@ -393,27 +320,46 @@ def parse_editor_buffer(
 ) -> dict[str, tuple[datetime, datetime]]:
     by_short_hash = {commit.short_hash: commit for commit in commits}
     updated: dict[str, tuple[datetime, datetime]] = {}
-    pattern = re.compile(
-        r"^author=(?P<author>.+?) committer=(?P<committer>.+?) (?P<short>[0-9a-f]+) (?P<subject>.*)$"
-    )
 
     for raw_line in content.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        match = pattern.fullmatch(line)
-        if not match:
-            raise ToolError(f"could not parse edited line: {raw_line}")
-        short_hash = match.group("short")
-        commit = by_short_hash.get(short_hash)
+
+        commit = None
+        prefix = ""
+        for candidate in commits:
+            suffix = f" {candidate.short_hash} {candidate.subject}"
+            if line.endswith(suffix):
+                commit = candidate
+                prefix = line[: -len(suffix)]
+                break
+
         if commit is None:
-            raise ToolError(f"unknown short hash in edited file: {short_hash}")
-        if commit.subject != match.group("subject"):
-            raise ToolError(f"commit subject changed for {short_hash}; only edit the timestamps")
+            for candidate in commits:
+                subject_suffix = f" {candidate.subject}"
+                if line.endswith(subject_suffix):
+                    maybe_short = line[: -len(subject_suffix)].rsplit(" ", 1)[-1]
+                    if maybe_short not in by_short_hash:
+                        raise ToolError(f"unknown short hash in edited file: {maybe_short}")
+            for candidate in commits:
+                if f" {candidate.short_hash} " in line:
+                    raise ToolError(
+                        f"commit subject changed for {candidate.short_hash}; only edit the timestamps"
+                    )
+            raise ToolError(f"could not parse edited line: {raw_line}")
+
+        author_prefix = "author="
+        committer_marker = " committer="
+        if not prefix.startswith(author_prefix) or committer_marker not in prefix:
+            raise ToolError(f"could not parse edited line: {raw_line}")
+
+        author_text, committer_text = prefix[len(author_prefix):].split(committer_marker, 1)
+        short_hash = commit.short_hash
         if short_hash in updated:
             raise ToolError(f"duplicate short hash in edited file: {short_hash}")
-        author_dt = parse_datetime_value(match.group("author"), spec)
-        committer_dt = parse_datetime_value(match.group("committer"), spec)
+        author_dt = parse_datetime_value(author_text, spec)
+        committer_dt = parse_datetime_value(committer_text, spec)
         updated[short_hash] = (author_dt, committer_dt)
 
     missing = [commit.short_hash for commit in commits if commit.short_hash not in updated]
@@ -574,10 +520,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--format",
         dest="date_format",
-        default="rfc-3339=seconds",
+        default="rfc-3339",
         help=(
-            "display/edit format. Supports +FORMAT and selectors like "
-            "rfc-3339=seconds or iso-8601=minutes"
+            "display/edit format. Choose one of: "
+            "rfc-3339, iso-8601, rfc-2822, unix"
         ),
     )
     return parser

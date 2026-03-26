@@ -13,31 +13,29 @@ UTC = timezone.utc
 def test_normalize_date_format_variants() -> None:
     default_spec = gts.normalize_date_format(None)
     assert default_spec.base == "rfc-3339"
-    assert default_spec.precision == "seconds"
+    assert default_spec.raw == "rfc-3339"
 
     blank_spec = gts.normalize_date_format("   ")
     assert blank_spec.base == "rfc-3339"
-    assert blank_spec.precision == "seconds"
+    assert blank_spec.raw == "rfc-3339"
 
     short_selector = gts.normalize_date_format("iso-8601")
     assert short_selector.base == "iso-8601"
-    assert short_selector.precision == "seconds"
+    assert short_selector.raw == "iso-8601"
 
-    stripped_spec = gts.normalize_date_format("--iso8601=minutes")
-    assert stripped_spec.base == "iso-8601"
-    assert stripped_spec.precision == "minutes"
+    alias_spec = gts.normalize_date_format("rfc2822")
+    assert alias_spec.base == "rfc-2822"
 
-    custom_spec = gts.normalize_date_format("+%Y-%m-%d %H:%M:%S %:z")
-    assert custom_spec.kind == "custom"
-    assert custom_spec.custom_format == "%Y-%m-%d %H:%M:%S %:z"
+    unix_spec = gts.normalize_date_format("unix")
+    assert unix_spec.base == "unix"
 
 
 def test_normalize_date_format_invalid() -> None:
     with pytest.raises(gts.ToolError, match="unsupported --format value"):
-        gts.normalize_date_format("rfc-3339=weeks")
+        gts.normalize_date_format("rfc-3339=seconds")
 
     with pytest.raises(gts.ToolError, match="unsupported --format value"):
-        gts.normalize_date_format("not-a-selector")
+        gts.normalize_date_format("+%Y-%m-%d %H:%M:%S %:z")
 
 
 def test_format_offset_and_naive_error() -> None:
@@ -50,65 +48,40 @@ def test_format_offset_and_naive_error() -> None:
 
 
 def test_standard_round_trips() -> None:
-    base_dt = datetime(2024, 2, 3, 4, 5, 6, 123456, tzinfo=UTC)
+    base_dt = datetime(2024, 2, 3, 4, 5, 6, tzinfo=UTC)
 
-    date_spec = gts.normalize_date_format("rfc-3339=date")
-    assert gts.format_datetime(base_dt, date_spec) == "2024-02-03"
-    assert gts.parse_datetime_value("2024-02-03", date_spec).tzinfo == gts.LOCAL_TZ
+    rfc3339_spec = gts.normalize_date_format("rfc-3339")
+    assert gts.format_datetime(base_dt, rfc3339_spec) == "2024-02-03 04:05:06+00:00"
+    assert gts.parse_datetime_value("2024-02-03T04:05:06Z", rfc3339_spec).isoformat() == "2024-02-03T04:05:06+00:00"
 
-    hours_spec = gts.normalize_date_format("iso-8601=hours")
-    assert gts.format_datetime(base_dt, hours_spec) == "2024-02-03T04+00:00"
-    assert gts.parse_datetime_value("2024-02-03T04+00:00", hours_spec).isoformat() == "2024-02-03T04:00:00+00:00"
+    iso_spec = gts.normalize_date_format("iso-8601")
+    assert gts.format_datetime(base_dt, iso_spec) == "2024-02-03T04:05:06+00:00"
+    assert gts.parse_datetime_value("2024-02-03T04:05:06+00:00", iso_spec).isoformat() == "2024-02-03T04:05:06+00:00"
 
-    minutes_spec = gts.normalize_date_format("iso-8601=minutes")
-    assert gts.format_datetime(base_dt, minutes_spec) == "2024-02-03T04:05+00:00"
-    assert gts.parse_datetime_value("2024-02-03T04:05+00:00", minutes_spec).isoformat() == "2024-02-03T04:05:00+00:00"
+    rfc2822_spec = gts.normalize_date_format("rfc-2822")
+    assert gts.format_datetime(base_dt, rfc2822_spec) == "Sat, 03 Feb 2024 04:05:06 +0000"
+    assert gts.parse_datetime_value("Sat, 03 Feb 2024 04:05:06 +0000", rfc2822_spec).isoformat() == "2024-02-03T04:05:06+00:00"
 
-    seconds_spec = gts.normalize_date_format("rfc-3339=seconds")
-    rendered = gts.format_datetime(base_dt, seconds_spec)
-    assert rendered == "2024-02-03 04:05:06+00:00"
-    assert gts.parse_datetime_value("2024-02-03T04:05:06Z", seconds_spec).isoformat() == "2024-02-03T04:05:06+00:00"
-
-    ns_spec = gts.normalize_date_format("iso-8601=ns")
-    ns_text = gts.format_datetime(base_dt, ns_spec)
-    assert ns_text == "2024-02-03T04:05:06.123456000+00:00"
-    assert gts.parse_datetime_value(ns_text, ns_spec).isoformat() == "2024-02-03T04:05:06.123456+00:00"
+    unix_spec = gts.normalize_date_format("unix")
+    assert gts.format_datetime(base_dt, unix_spec) == "1706933106"
+    assert gts.parse_datetime_value("1706933106", unix_spec).isoformat() == "2024-02-03T04:05:06+00:00"
 
 
 def test_standard_parse_errors() -> None:
-    with pytest.raises(gts.ToolError, match="invalid nanosecond timestamp"):
-        gts.parse_standard_datetime("not-a-date", gts.DateFormatSpec(raw="iso-8601=ns", kind="selector", base="iso-8601", precision="ns"))
+    with pytest.raises(gts.ToolError, match="invalid rfc-3339 timestamp"):
+        gts.parse_standard_datetime("not-a-date", gts.DateFormatSpec(raw="rfc-3339", base="rfc-3339"))
 
-    with pytest.raises(gts.ToolError, match="unsupported precision"):
-        gts.format_standard_datetime(datetime(2024, 1, 1, tzinfo=UTC), gts.DateFormatSpec(raw="x", kind="selector", base="iso-8601", precision="weird"))
+    with pytest.raises(gts.ToolError, match="invalid rfc-2822 timestamp"):
+        gts.parse_standard_datetime("not-a-date", gts.DateFormatSpec(raw="rfc-2822", base="rfc-2822"))
 
-    with pytest.raises(gts.ToolError, match="unsupported precision"):
-        gts.parse_standard_datetime("2024-01-01", gts.DateFormatSpec(raw="x", kind="selector", base="iso-8601", precision="weird"))
+    with pytest.raises(gts.ToolError, match="invalid unix timestamp"):
+        gts.parse_standard_datetime("not-a-date", gts.DateFormatSpec(raw="unix", base="unix"))
 
+    with pytest.raises(gts.ToolError, match="unsupported format"):
+        gts.format_standard_datetime(datetime(2024, 1, 1, tzinfo=UTC), gts.DateFormatSpec(raw="x", base="weird"))
 
-def test_custom_round_trips_and_normalization() -> None:
-    dt = datetime(2024, 3, 4, 5, 6, 7, 123456, tzinfo=UTC)
-    custom = gts.normalize_date_format("+%Y-%m-%d %H:%M:%S.%N %:z")
-    rendered = gts.format_datetime(dt, custom)
-    assert rendered == "2024-03-04 05:06:07.123456000 +00:00"
-    parsed = gts.parse_datetime_value(rendered, custom)
-    assert parsed.isoformat() == "2024-03-04T05:06:07.123456+00:00"
-
-    custom_seconds = gts.normalize_date_format("+%Y-%m-%d %H:%M:%S %::z")
-    rendered_seconds = gts.format_datetime(dt, custom_seconds)
-    assert rendered_seconds == "2024-03-04 05:06:07 +00:00:00"
-    parsed_seconds = gts.parse_datetime_value(rendered_seconds, custom_seconds)
-    assert parsed_seconds.isoformat() == "2024-03-04T05:06:07+00:00"
-
-
-def test_custom_parse_without_timezone_uses_local_tz() -> None:
-    parsed = gts.parse_custom_datetime("2024-03-04 05:06:07", "%Y-%m-%d %H:%M:%S")
-    assert parsed.tzinfo == gts.LOCAL_TZ
-
-
-def test_custom_fraction_errors() -> None:
-    with pytest.raises(gts.ToolError, match="no fractional seconds"):
-        gts.normalize_fractional_seconds("2024-01-01T00:00:00+00:00")
+    with pytest.raises(gts.ToolError, match="unsupported format"):
+        gts.parse_standard_datetime("2024-01-01", gts.DateFormatSpec(raw="x", base="weird"))
 
 
 def test_month_shift_and_offset_helpers() -> None:

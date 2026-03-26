@@ -116,19 +116,19 @@ def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsy
     assert "Rewrote timestamps for 2 selected commit(s)." in capsys.readouterr().out
 
 
-def test_main_editor_flow_with_custom_format(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_editor_flow_with_rfc2822_format(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(git_repo)
     monkeypatch.setattr("builtins.input", lambda prompt: "yes")
     editor = (
         "python3 -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); "
         "s=p.read_text(); "
-        "s=s.replace(\"author=2024-01-02 11:00:00 +00:00\", \"author=2024-01-05 08:30:00 +00:00\", 1); "
-        "s=s.replace(\"committer=2024-01-02 11:06:00 +00:00\", \"committer=2024-01-05 09:45:00 +00:00\", 1); "
+        "s=s.replace(\"author=Tue, 02 Jan 2024 11:00:00 +0000\", \"author=Fri, 05 Jan 2024 08:30:00 +0000\", 1); "
+        "s=s.replace(\"committer=Tue, 02 Jan 2024 11:06:00 +0000\", \"committer=Fri, 05 Jan 2024 09:45:00 +0000\", 1); "
         "p.write_text(s)'"
     )
     monkeypatch.setenv("GIT_EDITOR", editor)
 
-    exit_code = gts.main(["git_time_shift.py", "HEAD~1..HEAD", "--format", "+%Y-%m-%d %H:%M:%S %:z"])
+    exit_code = gts.main(["git_time_shift.py", "HEAD~1..HEAD", "--format", "rfc-2822"])
     assert exit_code == 0
 
     line = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-1").strip()

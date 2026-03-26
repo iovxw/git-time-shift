@@ -34,9 +34,9 @@ def sample_commits() -> list[gts.CommitRecord]:
 
 def test_build_editor_buffer_and_parse_success() -> None:
     commits = sample_commits()
-    spec = gts.normalize_date_format("rfc-3339=seconds")
+    spec = gts.normalize_date_format("rfc-3339")
     content = gts.build_editor_buffer(commits, spec)
-    assert "# Format: rfc-3339=seconds" in content
+    assert "# Format: rfc-3339" in content
     assert "|" not in content
 
     edited = content.replace("2024-01-02 11:00:00+00:00", "2024-01-03 12:30:00+00:00", 1)
@@ -66,14 +66,14 @@ def test_build_editor_buffer_and_parse_success() -> None:
 )
 def test_parse_editor_buffer_errors(edited: str, message: str) -> None:
     commits = sample_commits()
-    spec = gts.normalize_date_format("rfc-3339=seconds")
+    spec = gts.normalize_date_format("rfc-3339")
     with pytest.raises(gts.ToolError, match=message):
         gts.parse_editor_buffer(edited, commits, spec)
 
 
 def test_parse_editor_buffer_missing_commit() -> None:
     commits = sample_commits()
-    spec = gts.normalize_date_format("rfc-3339=seconds")
+    spec = gts.normalize_date_format("rfc-3339")
     edited = "author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit"
     with pytest.raises(gts.ToolError, match="missing commits"):
         gts.parse_editor_buffer(edited, commits, spec)
@@ -81,7 +81,7 @@ def test_parse_editor_buffer_missing_commit() -> None:
 
 def test_collect_edited_dates_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commits = sample_commits()
-    spec = gts.normalize_date_format("rfc-3339=seconds")
+    spec = gts.normalize_date_format("rfc-3339")
 
     def fake_open_editor(repo_root: str, file_path: str) -> None:
         content = Path(file_path).read_text(encoding="utf-8")
@@ -97,7 +97,7 @@ def test_collect_edited_dates_and_cleanup(tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_collect_edited_dates_cleanup_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commits = sample_commits()
-    spec = gts.normalize_date_format("rfc-3339=seconds")
+    spec = gts.normalize_date_format("rfc-3339")
     removed_paths: list[str] = []
 
     def fake_open_editor(repo_root: str, file_path: str) -> None:
@@ -121,7 +121,7 @@ def test_build_offset_dates_preview_and_confirm(monkeypatch: pytest.MonkeyPatch)
     commits = sample_commits()
     offset_tokens = gts.parse_offset_expression("1d")
     updated = gts.build_offset_dates(commits, offset_tokens)
-    preview_lines, mapping = gts.build_preview_lines(commits, updated, gts.normalize_date_format("rfc-3339=seconds"))
+    preview_lines, mapping = gts.build_preview_lines(commits, updated, gts.normalize_date_format("rfc-3339"))
     assert len(preview_lines) == 2
     assert all("|" not in line for line in preview_lines)
     assert set(mapping) == {"a" * 40, "b" * 40}
@@ -129,7 +129,7 @@ def test_build_offset_dates_preview_and_confirm(monkeypatch: pytest.MonkeyPatch)
     unchanged, unchanged_mapping = gts.build_preview_lines(
         commits,
         {commit.full_hash: (commit.author_dt, commit.committer_dt) for commit in commits},
-        gts.normalize_date_format("rfc-3339=seconds"),
+        gts.normalize_date_format("rfc-3339"),
     )
     assert unchanged == []
     assert unchanged_mapping == {}

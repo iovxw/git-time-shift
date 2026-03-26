@@ -57,27 +57,24 @@ Change only the timestamp values. After you save and exit, the tool prints a pre
 
 ## Format selection
 
-The default format is `rfc-3339=seconds`.
+The default format is `rfc-3339`.
+
+All standard formats render whole seconds.
 
 `--format` accepts:
 
-- GNU `date`-style custom formats starting with `+`
-- selector-style values such as:
-  - `rfc-3339`
-  - `rfc-3339=date`
-  - `rfc-3339=minutes`
-  - `rfc-3339=seconds`
-  - `rfc-3339=ns`
-  - `iso-8601`
-  - `iso-8601=hours`
-  - `iso-8601=minutes`
-  - `iso-8601=seconds`
-  - `iso-8601=ns`
+- `rfc-3339`: `2024-02-03 04:05:06+00:00`
+- `iso-8601`: `2024-02-03T04:05:06+00:00`
+- `rfc-2822`: `Sat, 03 Feb 2024 04:05:06 +0000`
+- `unix`: `1706933106`
 
-Example:
+Examples:
 
 ```bash
-python3 git_time_shift.py HEAD~2..HEAD --format '+%Y-%m-%d %H:%M:%S %:z'
+python3 git_time_shift.py HEAD~2..HEAD --format rfc-3339
+python3 git_time_shift.py HEAD~2..HEAD --format iso-8601
+python3 git_time_shift.py HEAD~2..HEAD --format rfc-2822
+python3 git_time_shift.py HEAD~2..HEAD --format unix
 ```
 
 ## Offset syntax
