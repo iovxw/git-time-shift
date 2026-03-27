@@ -247,8 +247,6 @@ def parse_offset_expression(expression: str | None) -> list[tuple[int, int, str]
     while index < len(expression):
         while index < len(expression) and expression[index].isspace():
             index += 1
-        if index >= len(expression):
-            break
         match = pattern.match(expression, index)
         if not match:
             raise ToolError(

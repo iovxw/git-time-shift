@@ -23,6 +23,9 @@ def test_normalize_date_format_variants() -> None:
     assert short_selector.base == "iso-8601"
     assert short_selector.raw == "iso-8601"
 
+    stripped_spec = gts.normalize_date_format("--iso8601")
+    assert stripped_spec.base == "iso-8601"
+
     alias_spec = gts.normalize_date_format("rfc2822")
     assert alias_spec.base == "rfc-2822"
 
@@ -84,6 +87,12 @@ def test_standard_parse_errors() -> None:
         gts.parse_standard_datetime("2024-01-01", gts.DateFormatSpec(raw="x", base="weird"))
 
 
+def test_rfc2822_parse_without_timezone_uses_local_tz(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gts, "parsedate_to_datetime", lambda value: datetime(2024, 3, 4, 5, 6, 7))
+    parsed = gts.parse_standard_datetime("Mon, 04 Mar 2024 05:06:07", gts.DateFormatSpec(raw="rfc-2822", base="rfc-2822"))
+    assert parsed.tzinfo == gts.LOCAL_TZ
+
+
 def test_month_shift_and_offset_helpers() -> None:
     leap = datetime(2024, 1, 31, 12, 0, 0, tzinfo=UTC)
     assert gts.month_shift(leap, 1).isoformat() == "2024-02-29T12:00:00+00:00"
@@ -105,12 +114,16 @@ def test_offset_parse_errors_and_invalid_unit() -> None:
     assert gts.parse_offset_expression(None) == []
     assert gts.parse_offset_expression("   ") == []
     assert gts.parse_offset_expression("1d   ") == [(1, 1, "d")]
+    assert gts.parse_offset_expression("1d 2h") == [(1, 1, "d"), (1, 2, "h")]
 
     with pytest.raises(gts.ToolError, match="invalid offset"):
         gts.parse_offset_expression("tomorrow")
 
     with pytest.raises(gts.ToolError, match="invalid offset"):
         gts.parse_offset_expression("+1d-2h")
+
+    with pytest.raises(gts.ToolError, match="invalid offset"):
+        gts.parse_offset_expression("-")
 
     with pytest.raises(gts.ToolError, match="unsupported offset unit"):
         gts.apply_offset_token(datetime(2024, 1, 1, tzinfo=UTC), 1, 1, "q")

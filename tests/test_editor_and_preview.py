@@ -52,6 +52,8 @@ def test_build_editor_buffer_and_parse_success() -> None:
         ("bad line", "could not parse edited line"),
         ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 deadbee first commit", "unknown short hash"),
         ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 changed subject", "commit subject changed"),
+        ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 second commit", "commit subject changed"),
+        ("2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit", "could not parse edited line"),
         (
             "\n".join(
                 [
