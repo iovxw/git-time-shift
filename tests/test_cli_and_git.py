@@ -80,6 +80,12 @@ def test_repo_helpers(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commits = gts.get_commits(str(git_repo), "HEAD~1..HEAD")
     assert [commit.subject for commit in commits] == ["second"]
 
+    head_commit = gts.get_commits(str(git_repo), "HEAD")
+    assert [commit.subject for commit in head_commit] == ["second"]
+
+    first_commit = gts.get_commits(str(git_repo), "HEAD~1")
+    assert [commit.subject for commit in first_commit] == ["first"]
+
     (git_repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
     with pytest.raises(gts.ToolError, match="uncommitted changes"):
         gts.ensure_clean_worktree(str(git_repo))
@@ -94,6 +100,16 @@ def test_get_commits_skips_blank_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gts, "git", lambda *args, **kwargs: "\n")
     with pytest.raises(gts.ToolError, match="range selected no commits"):
         gts.get_commits("/tmp/does-not-matter", "HEAD")
+
+
+def test_normalize_commit_selection_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert gts.normalize_commit_selection("/tmp/does-not-matter", "   ") == "   "
+
+    def raise_tool_error(*args, **kwargs):
+        raise gts.ToolError("bad revision")
+
+    monkeypatch.setattr(gts, "git", raise_tool_error)
+    assert gts.normalize_commit_selection("/tmp/does-not-matter", "not-a-commit") == "not-a-commit"
 
 
 def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -114,6 +130,29 @@ def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsy
         ("second", "2024-01-01T10:00:00+00:00", "2024-01-01T10:06:00+00:00"),
     ]
     assert "Rewrote timestamps for 2 selected commit(s)." in capsys.readouterr().out
+
+
+def test_main_single_commit_selector_updates_only_one_commit(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(git_repo)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = gts.main(["git_time_shift.py", "HEAD", "--offset", "1d"])
+    assert exit_code == 0
+
+    log_lines = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-2").strip().splitlines()
+    parsed = [
+        tuple(datetime.fromisoformat(part.replace("Z", "+00:00")).isoformat() if index else part for index, part in enumerate(line.split("|")))
+        for line in log_lines
+    ]
+    assert parsed == [
+        ("second", "2024-01-03T11:00:00+00:00", "2024-01-03T11:06:00+00:00"),
+        ("first", "2024-01-01T10:00:00+00:00", "2024-01-01T10:05:00+00:00"),
+    ]
+    assert "Rewrote timestamps for 1 selected commit(s)." in capsys.readouterr().out
 
 
 def test_main_editor_flow_with_rfc2822_format(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:

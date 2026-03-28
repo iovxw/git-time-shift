@@ -1,6 +1,6 @@
 # git-time-shift
 
-`git-time-shift` rewrites author and committer timestamps for a git-compatible commit range.
+`git-time-shift` rewrites author and committer timestamps for a git-compatible commit range or a single commit reference.
 
 It supports two workflows:
 
@@ -25,6 +25,8 @@ This tool rewrites history. Commit IDs will change for the selected commits and 
 python3 git_time_shift.py <range> [--offset OFFSET] [--format FORMAT]
 ```
 
+You can pass a range such as `HEAD~3..HEAD` or a single commit reference such as `HEAD`, `HEAD~2`, or a commit hash. A single commit reference edits only that one commit.
+
 ### Offset mode
 
 Shift the last three commits forward by one day and thirty minutes:
@@ -45,6 +47,12 @@ Open an editable file for the selected range:
 
 ```bash
 python3 git_time_shift.py HEAD~5..HEAD
+```
+
+Open an editable file for just `HEAD`:
+
+```bash
+python3 git_time_shift.py HEAD
 ```
 
 Each editable line looks like this:

@@ -78,14 +78,32 @@ def ensure_clean_worktree(repo_root: str) -> None:
         raise ToolError("repository has uncommitted changes; commit or stash them before rewriting history")
 
 
+def normalize_commit_selection(repo_root: str, range_expr: str) -> str:
+    expr = range_expr.strip()
+    if not expr:
+        return range_expr
+
+    if ".." in expr or expr.endswith(("^!", "^@", "^-")):
+        return expr
+
+    try:
+        commit_hash = git(["rev-parse", "--verify", f"{expr}^{{commit}}"], cwd=repo_root).strip()
+    except ToolError:
+        return expr
+    if not commit_hash:
+        return expr
+    return f"{commit_hash}^!"
+
+
 def get_commits(repo_root: str, range_expr: str) -> list[CommitRecord]:
+    selection = normalize_commit_selection(repo_root, range_expr)
     output = git(
         [
             "log",
             "--reverse",
             "--topo-order",
             "--format=%H%x00%h%x00%aI%x00%cI%x00%s",
-            range_expr,
+            selection,
         ],
         cwd=repo_root,
     )
