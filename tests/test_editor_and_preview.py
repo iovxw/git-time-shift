@@ -38,12 +38,36 @@ def test_build_editor_buffer_and_parse_success() -> None:
     content = gts.build_editor_buffer(commits, spec)
     assert "# Format: rfc-3339" in content
     assert "|" not in content
+    assert "# If author and committer times are the same" in content
 
     edited = content.replace("2024-01-02 11:00:00+00:00", "2024-01-03 12:30:00+00:00", 1)
     edited = edited.replace("2024-01-02 11:06:00+00:00", "2024-01-03 12:45:00+00:00", 1)
     parsed = gts.parse_editor_buffer(edited, commits, spec)
     assert parsed["b" * 40][0].isoformat() == "2024-01-03T12:30:00+00:00"
     assert parsed["b" * 40][1].isoformat() == "2024-01-03T12:45:00+00:00"
+
+
+def test_build_editor_buffer_and_parse_collapsed_equal_timestamps() -> None:
+    equal_dt = datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC)
+    commits = [
+        gts.CommitRecord(
+            full_hash="c" * 40,
+            short_hash="cccc333",
+            subject="same timestamp commit",
+            author_dt=equal_dt,
+            committer_dt=equal_dt,
+        )
+    ]
+    spec = gts.normalize_date_format("rfc-3339")
+    content = gts.build_editor_buffer(commits, spec)
+    assert "author=" not in content
+    assert "committer=" not in content
+    assert "2024-01-03 12:00:00+00:00 cccc333 same timestamp commit" in content
+
+    edited = content.replace("2024-01-03 12:00:00+00:00", "2024-01-04 13:30:00+00:00", 1)
+    parsed = gts.parse_editor_buffer(edited, commits, spec)
+    assert parsed["c" * 40][0].isoformat() == "2024-01-04T13:30:00+00:00"
+    assert parsed["c" * 40][1].isoformat() == "2024-01-04T13:30:00+00:00"
 
 
 @pytest.mark.parametrize(
@@ -54,6 +78,7 @@ def test_build_editor_buffer_and_parse_success() -> None:
         ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 changed subject", "commit subject changed"),
         ("author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 second commit", "commit subject changed"),
         ("2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit", "could not parse edited line"),
+        ("author=2024-01-01 10:00:00+00:00 aaaa111 first commit", "could not parse edited line"),
         (
             "\n".join(
                 [
@@ -140,6 +165,32 @@ def test_build_offset_dates_preview_and_confirm(monkeypatch: pytest.MonkeyPatch)
     assert gts.confirm("confirm? ")
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     assert not gts.confirm("confirm? ")
+
+
+def test_build_preview_lines_collapses_equal_timestamps() -> None:
+    equal_dt = datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC)
+    commits = [
+        gts.CommitRecord(
+            full_hash="c" * 40,
+            short_hash="cccc333",
+            subject="same timestamp commit",
+            author_dt=equal_dt,
+            committer_dt=equal_dt,
+        )
+    ]
+    updated = {"c" * 40: (equal_dt.replace(day=4), equal_dt.replace(day=4))}
+
+    preview_lines, mapping = gts.build_preview_lines(commits, updated, gts.normalize_date_format("rfc-3339"))
+
+    assert preview_lines == [
+        "2024-01-03 12:00:00+00:00 → 2024-01-04 12:00:00+00:00 cccc333 same timestamp commit"
+    ]
+    assert mapping == {
+        "c" * 40: {
+            "author": "2024-01-04T12:00:00+00:00",
+            "committer": "2024-01-04T12:00:00+00:00",
+        }
+    }
 
 
 def test_write_mapping_file_and_internal_env_filter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

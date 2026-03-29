@@ -309,13 +309,16 @@ def open_editor(repo_root: str, file_path: str) -> None:
 
 
 def format_author_committer_pair(author_text: str, committer_text: str) -> str:
+    if author_text == committer_text:
+        return author_text
     return f"author={author_text} committer={committer_text}"
 
 
 def build_editor_buffer(commits: list[CommitRecord], spec: DateFormatSpec) -> str:
     lines = [
         "# Edit author and committer times for each commit below.",
-        "# Change only the timestamp values after author=/committer=.",
+        "# Change only the timestamp values.",
+        "# If author and committer times are the same, the line shows a single timestamp.",
         "# Lines beginning with # are ignored.",
         f"# Format: {spec.raw}",
     ]
@@ -367,10 +370,15 @@ def parse_editor_buffer(
 
         author_prefix = "author="
         committer_marker = " committer="
-        if not prefix.startswith(author_prefix) or committer_marker not in prefix:
+        if prefix.startswith(author_prefix):
+            if committer_marker not in prefix:
+                raise ToolError(f"could not parse edited line: {raw_line}")
+            author_text, committer_text = prefix[len(author_prefix):].split(committer_marker, 1)
+        elif committer_marker in prefix:
             raise ToolError(f"could not parse edited line: {raw_line}")
-
-        author_text, committer_text = prefix[len(author_prefix):].split(committer_marker, 1)
+        else:
+            author_text = prefix
+            committer_text = prefix
         short_hash = commit.short_hash
         if short_hash in updated:
             raise ToolError(f"duplicate short hash in edited file: {short_hash}")
