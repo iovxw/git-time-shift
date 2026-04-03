@@ -32,6 +32,39 @@ def sample_commits() -> list[gts.CommitRecord]:
     ]
 
 
+def interpolation_commits() -> list[gts.CommitRecord]:
+    return [
+        gts.CommitRecord(
+            full_hash="a" * 40,
+            short_hash="aaaa111",
+            subject="first commit",
+            author_dt=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+            committer_dt=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+        ),
+        gts.CommitRecord(
+            full_hash="b" * 40,
+            short_hash="bbbb222",
+            subject="second commit",
+            author_dt=datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC),
+            committer_dt=datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC),
+        ),
+        gts.CommitRecord(
+            full_hash="c" * 40,
+            short_hash="cccc333",
+            subject="third commit",
+            author_dt=datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC),
+            committer_dt=datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC),
+        ),
+        gts.CommitRecord(
+            full_hash="d" * 40,
+            short_hash="dddd444",
+            subject="fourth commit",
+            author_dt=datetime(2024, 1, 4, 14, 0, 0, tzinfo=UTC),
+            committer_dt=datetime(2024, 1, 4, 14, 0, 0, tzinfo=UTC),
+        ),
+    ]
+
+
 def test_build_editor_buffer_and_parse_success() -> None:
     commits = sample_commits()
     spec = gts.normalize_date_format("rfc-3339")
@@ -70,6 +103,47 @@ def test_build_editor_buffer_and_parse_collapsed_equal_timestamps() -> None:
     assert parsed["c" * 40][1].isoformat() == "2024-01-04T13:30:00+00:00"
 
 
+def test_parse_editor_buffer_infers_single_missing_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = interpolation_commits()[:3]
+    spec = gts.normalize_date_format("rfc-3339")
+    monkeypatch.setattr(gts, "build_stable_inference_jitter", lambda *args, **kwargs: gts.timedelta(0))
+
+    edited = "\n".join(
+        [
+            "2024-01-01 10:00:00+00:00 aaaa111 first commit",
+            "bbbb222 second commit",
+            "2024-01-03 12:00:00+00:00 cccc333 third commit",
+        ]
+    )
+
+    parsed = gts.parse_editor_buffer(edited, commits, spec)
+
+    assert parsed["b" * 40][0].isoformat() == "2024-01-02T11:00:00+00:00"
+    assert parsed["b" * 40][1].isoformat() == "2024-01-02T11:00:00+00:00"
+
+
+def test_parse_editor_buffer_infers_multiple_missing_timestamps(monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = interpolation_commits()
+    spec = gts.normalize_date_format("rfc-3339")
+    monkeypatch.setattr(gts, "build_stable_inference_jitter", lambda *args, **kwargs: gts.timedelta(0))
+
+    edited = "\n".join(
+        [
+            "2024-01-01 10:00:00+00:00 aaaa111 first commit",
+            "bbbb222 second commit",
+            "cccc333 third commit",
+            "2024-01-04 14:00:00+00:00 dddd444 fourth commit",
+        ]
+    )
+
+    parsed = gts.parse_editor_buffer(edited, commits, spec)
+
+    assert parsed["b" * 40][0].isoformat() == "2024-01-02T11:20:00+00:00"
+    assert parsed["b" * 40][1].isoformat() == "2024-01-02T11:20:00+00:00"
+    assert parsed["c" * 40][0].isoformat() == "2024-01-03T12:40:00+00:00"
+    assert parsed["c" * 40][1].isoformat() == "2024-01-03T12:40:00+00:00"
+
+
 @pytest.mark.parametrize(
     ("edited", "message"),
     [
@@ -104,6 +178,48 @@ def test_parse_editor_buffer_missing_commit() -> None:
     edited = "author=2024-01-01 10:00:00+00:00 committer=2024-01-01 10:05:00+00:00 aaaa111 first commit"
     with pytest.raises(gts.ToolError, match="missing commits"):
         gts.parse_editor_buffer(edited, commits, spec)
+
+
+def test_parse_editor_buffer_missing_edge_timestamp_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = interpolation_commits()[:3]
+    spec = gts.normalize_date_format("rfc-3339")
+    monkeypatch.setattr(gts, "build_stable_inference_jitter", lambda *args, **kwargs: gts.timedelta(0))
+    edited = "\n".join(
+        [
+            "2024-01-01 10:00:00+00:00 aaaa111 first commit",
+            "2024-01-02 10:00:00+00:00 bbbb222 second commit",
+            "cccc333 third commit",
+        ]
+    )
+    with pytest.raises(gts.ToolError, match="cannot infer author time"):
+        gts.parse_editor_buffer(edited, commits, spec)
+
+
+def test_build_stable_inference_jitter_bounds() -> None:
+    jitter = gts.build_stable_inference_jitter("a" * 40, "author", gts.timedelta(hours=10))
+    assert abs(jitter.total_seconds()) <= 7200
+    assert gts.build_stable_inference_jitter("a" * 40, "author", gts.timedelta(0)) == gts.timedelta(0)
+
+
+def test_infer_missing_series_requires_increasing_anchors() -> None:
+    commits = interpolation_commits()[:3]
+    values = [
+        datetime(2024, 1, 3, 12, 0, 0, tzinfo=UTC),
+        None,
+        datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+    ]
+    with pytest.raises(gts.ToolError, match="surrounding timestamps must be strictly increasing"):
+        gts.infer_missing_series(commits, values, field_name="author")
+
+
+def test_ensure_increasing_series_errors() -> None:
+    commits = interpolation_commits()[:2]
+    values = [
+        datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC),
+        datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+    ]
+    with pytest.raises(gts.ToolError, match="author times must be strictly increasing"):
+        gts.ensure_increasing_series(commits, values, field_name="author")
 
 
 def test_collect_edited_dates_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,6 +258,54 @@ def test_collect_edited_dates_cleanup_missing_file(tmp_path: Path, monkeypatch: 
     assert parsed["a" * 40][0].isoformat() == "2024-01-01T10:00:00+00:00"
     assert removed_paths
     monkeypatch.setattr(gts.os, "unlink", real_unlink)
+
+
+def test_collect_edited_dates_reopens_editor_after_parse_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    commits = interpolation_commits()[:3]
+    spec = gts.normalize_date_format("rfc-3339")
+    monkeypatch.setattr(gts, "build_stable_inference_jitter", lambda *args, **kwargs: gts.timedelta(0))
+    calls = {"count": 0}
+
+    def fake_open_editor(repo_root: str, file_path: str) -> None:
+        calls["count"] += 1
+        path = Path(file_path)
+        content = path.read_text(encoding="utf-8")
+        if calls["count"] == 1:
+            content = content.replace("2024-01-03 12:00:00+00:00 cccc333 third commit", "cccc333 third commit", 1)
+        else:
+            assert "cccc333 third commit" in content
+            content = content.replace("cccc333 third commit", "2024-01-03 12:00:00+00:00 cccc333 third commit", 1)
+        path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(gts, "open_editor", fake_open_editor)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    parsed = gts.collect_edited_dates(str(tmp_path), commits, spec)
+
+    assert calls["count"] == 2
+    assert parsed["c" * 40][0].isoformat() == "2024-01-03T12:00:00+00:00"
+    assert "cannot infer author time" in capsys.readouterr().out
+
+
+def test_collect_edited_dates_reopen_declined_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commits = interpolation_commits()[:3]
+    spec = gts.normalize_date_format("rfc-3339")
+
+    def fake_open_editor(repo_root: str, file_path: str) -> None:
+        path = Path(file_path)
+        content = path.read_text(encoding="utf-8")
+        content = content.replace("2024-01-03 12:00:00+00:00 cccc333 third commit", "cccc333 third commit", 1)
+        path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(gts, "open_editor", fake_open_editor)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    with pytest.raises(gts.ToolError, match="cannot infer author time"):
+        gts.collect_edited_dates(str(tmp_path), commits, spec)
 
 
 def test_build_offset_dates_preview_and_confirm(monkeypatch: pytest.MonkeyPatch) -> None:

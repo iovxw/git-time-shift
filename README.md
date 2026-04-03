@@ -67,6 +67,10 @@ If the author and committer times are identical, the editable line shows just on
 2026-04-27 17:05:46+00:00 abc1234 Example commit subject
 ```
 
+If you delete timestamps for commits in the middle of the edited range, the tool infers replacement author and committer times separately. It interpolates across the whole missing block, keeps the selected history strictly increasing, and adds a stable jitter of at most two hours so repeated previews stay the same.
+
+If a missing block reaches either edge of the edited range, the tool stops, shows an error, and lets you reopen the editor with your previous edits preserved.
+
 Change only the timestamp values. After you save and exit, the tool prints a preview and asks for confirmation.
 
 ## Format selection

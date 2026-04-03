@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import hashlib
 import json
 import os
 import re
@@ -314,6 +315,132 @@ def format_author_committer_pair(author_text: str, committer_text: str) -> str:
     return f"author={author_text} committer={committer_text}"
 
 
+def match_editor_line_commit(line: str, commits: list[CommitRecord]) -> tuple[CommitRecord | None, str]:
+    for candidate in commits:
+        bare_suffix = f"{candidate.short_hash} {candidate.subject}"
+        if line == bare_suffix:
+            return candidate, ""
+        spaced_suffix = f" {bare_suffix}"
+        if line.endswith(spaced_suffix):
+            return candidate, line[:-len(spaced_suffix)]
+    return None, ""
+
+
+def raise_editor_line_error(line: str, raw_line: str, commits: list[CommitRecord], by_short_hash: dict[str, CommitRecord]) -> None:
+    for candidate in commits:
+        if line == candidate.subject or line.endswith(f" {candidate.subject}"):
+            preceding = line[:-len(candidate.subject)].rstrip()
+            maybe_short = preceding.rsplit(" ", 1)[-1] if preceding else ""
+            if maybe_short and maybe_short not in by_short_hash:
+                raise ToolError(f"unknown short hash in edited file: {maybe_short}")
+    for candidate in commits:
+        if line == candidate.short_hash or line.startswith(f"{candidate.short_hash} ") or f" {candidate.short_hash} " in line:
+            raise ToolError(
+                f"commit subject changed for {candidate.short_hash}; only edit the timestamps"
+            )
+    raise ToolError(f"could not parse edited line: {raw_line}")
+
+
+def parse_editor_line_prefix(prefix: str, raw_line: str) -> tuple[str, str]:
+    author_prefix = "author="
+    committer_marker = " committer="
+    if prefix.startswith(author_prefix):
+        if committer_marker not in prefix:
+            raise ToolError(f"could not parse edited line: {raw_line}")
+        author_text, committer_text = prefix[len(author_prefix):].split(committer_marker, 1)
+        return author_text.strip(), committer_text.strip()
+    if committer_marker in prefix:
+        raise ToolError(f"could not parse edited line: {raw_line}")
+    value = prefix.strip()
+    return value, value
+
+
+def parse_optional_datetime_value(text: str, spec: DateFormatSpec) -> datetime | None:
+    value = text.strip()
+    if not value:
+        return None
+    return parse_datetime_value(value, spec)
+
+
+def build_stable_inference_jitter(commit_hash: str, field_name: str, gap: timedelta) -> timedelta:
+    max_seconds = min(7200.0, gap.total_seconds() * 0.4)
+    if max_seconds <= 0:
+        return timedelta(0)
+    digest = hashlib.sha256(f"{commit_hash}:{field_name}".encode("utf-8")).digest()
+    normalized = int.from_bytes(digest[:8], "big") / float((1 << 64) - 1)
+    offset_scale = (normalized * 2.0) - 1.0
+    return timedelta(seconds=offset_scale * max_seconds)
+
+
+def infer_missing_series(
+    commits: list[CommitRecord],
+    values: list[datetime | None],
+    *,
+    field_name: str,
+) -> list[datetime]:
+    resolved = values[:]
+    index = 0
+    while index < len(resolved):
+        if resolved[index] is not None:
+            index += 1
+            continue
+
+        block_start = index
+        while index < len(resolved) and resolved[index] is None:
+            index += 1
+        block_end = index
+        missing_commits = ", ".join(commit.short_hash for commit in commits[block_start:block_end])
+
+        left_index = block_start - 1
+        right_index = block_end
+        if left_index < 0 or right_index >= len(resolved):
+            raise ToolError(
+                f"cannot infer {field_name} time for commits: {missing_commits}; fill the edge timestamps and try again"
+            )
+
+        left_dt = resolved[left_index]
+        right_dt = resolved[right_index]
+        if left_dt is None or right_dt is None or left_dt >= right_dt:
+            raise ToolError(
+                f"cannot infer {field_name} time for commits: {missing_commits}; surrounding timestamps must be strictly increasing"
+            )
+
+        missing_count = block_end - block_start
+        gap = (right_dt - left_dt) / (missing_count + 1)
+        for offset, commit_index in enumerate(range(block_start, block_end), start=1):
+            base_time = left_dt + gap * offset
+            jitter = build_stable_inference_jitter(commits[commit_index].full_hash, field_name, gap)
+            resolved[commit_index] = base_time + jitter
+
+    return [value for value in resolved if value is not None]
+
+
+def ensure_increasing_series(commits: list[CommitRecord], values: list[datetime], *, field_name: str) -> None:
+    for index in range(1, len(values)):
+        if values[index - 1] >= values[index]:
+            raise ToolError(
+                f"{field_name} times must be strictly increasing; {commits[index - 1].short_hash} must be earlier than {commits[index].short_hash}"
+            )
+
+
+def resolve_editor_dates(
+    commits: list[CommitRecord],
+    parsed_dates: dict[str, tuple[datetime | None, datetime | None]],
+) -> dict[str, tuple[datetime, datetime]]:
+    author_values = [parsed_dates[commit.short_hash][0] for commit in commits]
+    committer_values = [parsed_dates[commit.short_hash][1] for commit in commits]
+
+    resolved_authors = infer_missing_series(commits, author_values, field_name="author")
+    resolved_committers = infer_missing_series(commits, committer_values, field_name="committer")
+    ensure_increasing_series(commits, resolved_authors, field_name="author")
+    ensure_increasing_series(commits, resolved_committers, field_name="committer")
+
+    return {
+        commit.full_hash: (resolved_authors[index], resolved_committers[index])
+        for index, commit in enumerate(commits)
+    }
+
+
 def build_editor_buffer(commits: list[CommitRecord], spec: DateFormatSpec) -> str:
     lines = [
         "# Edit author and committer times for each commit below.",
@@ -338,62 +465,31 @@ def parse_editor_buffer(
     spec: DateFormatSpec,
 ) -> dict[str, tuple[datetime, datetime]]:
     by_short_hash = {commit.short_hash: commit for commit in commits}
-    updated: dict[str, tuple[datetime, datetime]] = {}
+    updated: dict[str, tuple[datetime | None, datetime | None]] = {}
 
     for raw_line in content.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
 
-        commit = None
-        prefix = ""
-        for candidate in commits:
-            suffix = f" {candidate.short_hash} {candidate.subject}"
-            if line.endswith(suffix):
-                commit = candidate
-                prefix = line[: -len(suffix)]
-                break
+        commit, prefix = match_editor_line_commit(line, commits)
 
         if commit is None:
-            for candidate in commits:
-                subject_suffix = f" {candidate.subject}"
-                if line.endswith(subject_suffix):
-                    maybe_short = line[: -len(subject_suffix)].rsplit(" ", 1)[-1]
-                    if maybe_short not in by_short_hash:
-                        raise ToolError(f"unknown short hash in edited file: {maybe_short}")
-            for candidate in commits:
-                if f" {candidate.short_hash} " in line:
-                    raise ToolError(
-                        f"commit subject changed for {candidate.short_hash}; only edit the timestamps"
-                    )
-            raise ToolError(f"could not parse edited line: {raw_line}")
+            raise_editor_line_error(line, raw_line, commits, by_short_hash)
 
-        author_prefix = "author="
-        committer_marker = " committer="
-        if prefix.startswith(author_prefix):
-            if committer_marker not in prefix:
-                raise ToolError(f"could not parse edited line: {raw_line}")
-            author_text, committer_text = prefix[len(author_prefix):].split(committer_marker, 1)
-        elif committer_marker in prefix:
-            raise ToolError(f"could not parse edited line: {raw_line}")
-        else:
-            author_text = prefix
-            committer_text = prefix
+        author_text, committer_text = parse_editor_line_prefix(prefix, raw_line)
         short_hash = commit.short_hash
         if short_hash in updated:
             raise ToolError(f"duplicate short hash in edited file: {short_hash}")
-        author_dt = parse_datetime_value(author_text, spec)
-        committer_dt = parse_datetime_value(committer_text, spec)
+        author_dt = parse_optional_datetime_value(author_text, spec)
+        committer_dt = parse_optional_datetime_value(committer_text, spec)
         updated[short_hash] = (author_dt, committer_dt)
 
     missing = [commit.short_hash for commit in commits if commit.short_hash not in updated]
     if missing:
         raise ToolError(f"edited file is missing commits: {', '.join(missing)}")
 
-    return {
-        commit.full_hash: updated[commit.short_hash]
-        for commit in commits
-    }
+    return resolve_editor_dates(commits, updated)
 
 
 def collect_edited_dates(
@@ -412,9 +508,16 @@ def collect_edited_dates(
         temp_path = handle.name
 
     try:
-        open_editor(repo_root, temp_path)
-        edited_content = Path(temp_path).read_text(encoding="utf-8")
-        return parse_editor_buffer(edited_content, commits, spec)
+        while True:
+            open_editor(repo_root, temp_path)
+            edited_content = Path(temp_path).read_text(encoding="utf-8")
+            try:
+                return parse_editor_buffer(edited_content, commits, spec)
+            except ToolError as exc:
+                print(f"error: {exc}")
+                answer = input("Reopen editor and keep your changes? [Y/n]: ").strip().lower()
+                if answer not in {"", "y", "yes"}:
+                    raise
     finally:
         try:
             os.unlink(temp_path)
