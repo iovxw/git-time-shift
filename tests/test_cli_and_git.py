@@ -117,7 +117,7 @@ def test_main_offset_flow(git_repo: Path, monkeypatch: pytest.MonkeyPatch, capsy
     monkeypatch.chdir(git_repo)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
-    exit_code = gts.main(["git_time_shift.py", "HEAD~2..HEAD", "--offset", "-1d1h"])
+    exit_code = gts.main(["git_time_shift.py", "HEAD~2..HEAD", "-1d1h"])
     assert exit_code == 0
 
     log_lines = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-2").strip().splitlines()
@@ -140,7 +140,7 @@ def test_main_single_commit_selector_updates_only_one_commit(
     monkeypatch.chdir(git_repo)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
-    exit_code = gts.main(["git_time_shift.py", "HEAD", "--offset", "1d"])
+    exit_code = gts.main(["git_time_shift.py", "HEAD", "1d"])
     assert exit_code == 0
 
     log_lines = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-2").strip().splitlines()
@@ -170,11 +170,29 @@ def test_main_editor_flow_with_rfc2822_format(git_repo: Path, monkeypatch: pytes
     exit_code = gts.main(["git_time_shift.py", "HEAD~1..HEAD", "--format", "rfc-2822"])
     assert exit_code == 0
 
-    line = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-1").strip()
-    subject, author, committer = line.split("|")
-    assert subject == "second"
-    assert datetime.fromisoformat(author.replace("Z", "+00:00")).isoformat() == "2024-01-05T08:30:00+00:00"
-    assert datetime.fromisoformat(committer.replace("Z", "+00:00")).isoformat() == "2024-01-05T09:45:00+00:00"
+
+def test_main_offset_flow_with_format_before_anonymous_offset(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    make_commit(git_repo, "file.txt", "three\n", "third", "2024-01-03T12:00:00+00:00", "2024-01-03T12:09:00+00:00")
+    monkeypatch.chdir(git_repo)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = gts.main(["git_time_shift.py", "HEAD~2..HEAD", "--format", "rfc-3339", "1d"])
+    assert exit_code == 0
+    assert "Rewrote timestamps for 2 selected commit(s)." in capsys.readouterr().out
+
+    log_lines = run_git(git_repo, "log", "--format=%s|%aI|%cI", "-2").strip().splitlines()
+    parsed = [
+        tuple(datetime.fromisoformat(part.replace("Z", "+00:00")).isoformat() if index else part for index, part in enumerate(line.split("|")))
+        for line in log_lines
+    ]
+    assert parsed == [
+        ("third", "2024-01-04T12:00:00+00:00", "2024-01-04T12:09:00+00:00"),
+        ("second", "2024-01-03T11:00:00+00:00", "2024-01-03T11:06:00+00:00"),
+    ]
 
 
 def test_main_no_changes_and_abort(monkeypatch: pytest.MonkeyPatch, git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

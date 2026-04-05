@@ -640,8 +640,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("range_expr", help="git-compatible revision range (for example: HEAD~3..HEAD)")
     parser.add_argument(
-        "--offset",
-        dest="offset_expr",
+        "offset_expr",
+        nargs="?",
         help="optional offset expression, for example: -1d1h or 2mo30m",
     )
     parser.add_argument(

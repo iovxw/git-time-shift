@@ -22,7 +22,7 @@ This tool rewrites history. Commit IDs will change for the selected commits and 
 ## Usage
 
 ```bash
-python3 git_time_shift.py <range> [--offset OFFSET] [--format FORMAT]
+python3 git_time_shift.py <range> [offset] [--format FORMAT]
 ```
 
 You can pass a range such as `HEAD~3..HEAD` or a single commit reference such as `HEAD`, `HEAD~2`, or a commit hash. A single commit reference edits only that one commit.
@@ -32,13 +32,13 @@ You can pass a range such as `HEAD~3..HEAD` or a single commit reference such as
 Shift the last three commits forward by one day and thirty minutes:
 
 ```bash
-python3 git_time_shift.py HEAD~3..HEAD --offset 1d30m
+python3 git_time_shift.py HEAD~3..HEAD 1d30m
 ```
 
 Shift all commits that are in `feature` but not in `main` back by one day and one hour:
 
 ```bash
-python3 git_time_shift.py main..feature --offset=-1d1h
+python3 git_time_shift.py main..feature -1d1h
 ```
 
 ### Editor mode
@@ -110,10 +110,10 @@ Offset expressions use a single value. A leading sign applies to the whole expre
 Examples:
 
 ```bash
-python3 git_time_shift.py HEAD~4..HEAD --offset 1d
-python3 git_time_shift.py HEAD~4..HEAD --offset 1d10h30m
-python3 git_time_shift.py HEAD~4..HEAD --offset=-1d1h
-python3 git_time_shift.py HEAD~4..HEAD --offset 2mo
+python3 git_time_shift.py HEAD~4..HEAD 1d
+python3 git_time_shift.py HEAD~4..HEAD 1d10h30m
+python3 git_time_shift.py HEAD~4..HEAD -1d1h
+python3 git_time_shift.py HEAD~4..HEAD 2mo
 ```
 
 ## Notes
